@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+sprinkler.db
+.env
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+backend/__pycache__/
+backend/sprinkler.db
