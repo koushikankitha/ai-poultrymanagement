@@ -155,7 +155,9 @@ function mergeNodeWithControl(node: NodeSummary, control?: ControlState, predict
 }
 
 function isFreshReading(reading: Reading): boolean {
-  return Date.now() - new Date(reading.created_at).getTime() <= HARDWARE_FRESHNESS_MS;
+  const raw = reading.created_at;
+  const normalized = /Z$|[+-]\d{2}:\d{2}$/.test(raw) ? raw : `${raw}Z`;
+  return Date.now() - new Date(normalized).getTime() <= HARDWARE_FRESHNESS_MS;
 }
 
 export function DashboardPage() {
@@ -497,8 +499,8 @@ export function DashboardPage() {
               {!activeNode
                 ? "No node selected yet."
                 : controlMode === "manual"
-                ? "Manual mode gives the operator direct relay control."
-                : "ML mode gives the AI model control over relay decisions based on current climate data."}
+                  ? "Manual mode gives the operator direct relay control."
+                  : "ML mode gives the AI model control over relay decisions based on current climate data."}
             </p>
           </div>
 
