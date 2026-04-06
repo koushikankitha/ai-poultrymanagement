@@ -31,10 +31,12 @@ import type { ControlState, MlMetrics, NodeSummary, PredictionResponse, Reading 
 
 const TOKEN_KEY = "sprinkler-admin-token";
 const MODE_KEY = "sprinkler-dashboard-mode";
+const THEME_KEY = "sprinkler-dashboard-theme";
 const HARDWARE_FRESHNESS_MS = 2 * 60 * 1000;
 
 type DashboardMode = "simulation" | "hardware";
 type PageSection = "dashboard" | "analytics" | "history" | "reports" | "info";
+type ThemeMode = "dark" | "light";
 
 type SimulationBundle = {
   latestNodes: NodeSummary[];
@@ -165,6 +167,10 @@ export function DashboardPage() {
     const saved = localStorage.getItem(MODE_KEY);
     return saved === "hardware" ? "hardware" : "simulation";
   });
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved === "light" ? "light" : "dark";
+  });
   const [section, setSection] = useState<PageSection>("dashboard");
   const [nodes, setNodes] = useState<NodeSummary[]>([]);
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
@@ -183,6 +189,12 @@ export function DashboardPage() {
   useEffect(() => {
     localStorage.setItem(MODE_KEY, mode);
   }, [mode]);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_KEY, theme);
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
 
   function loadSimulationDashboard() {
     const selectedNode = activeNodeId ?? simulationBundle.latestNodes[0]?.node_id ?? null;
@@ -379,9 +391,17 @@ export function DashboardPage() {
     predictedOff: row[0],
     predictedOn: row[1]
   })) ?? [];
+  const chartAxisColor = "var(--chart-axis)";
+  const chartGridColor = "var(--chart-grid)";
+  const chartTooltipStyle = {
+    backgroundColor: "var(--tooltip-bg)",
+    border: "1px solid var(--border)",
+    borderRadius: "16px",
+    color: "var(--text)"
+  };
 
   return (
-    <main className="dashboard-shell dashboard-shell--dark">
+    <main className="dashboard-shell">
       <header className="topbar">
         <div className="brand-mark">
           <div className="brand-mark__icon">SS</div>
@@ -403,12 +423,16 @@ export function DashboardPage() {
             </button>
           ))}
         </nav>
-        <div className="topbar__status">
+        <div className="topbar__actions">
+          <div className="theme-switch" role="tablist" aria-label="Theme selection">
+            <button type="button" className={theme === "dark" ? "active" : ""} onClick={() => setTheme("dark")}>Dark</button>
+            <button type="button" className={theme === "light" ? "active" : ""} onClick={() => setTheme("light")}>Light</button>
+          </div>
           <StatusBadge label={mode === "simulation" ? "Simulation" : "Hardware"} tone={mode === "simulation" ? "neutral" : nodes.length ? "safe" : "critical"} />
         </div>
       </header>
 
-      <section className="hero hero--dark">
+      <section className="hero">
         <div>
           <p className="eyebrow">Smart Sprinkler Management System for Poultry Heat Control</p>
           <h1>{sectionContent[section].title}</h1>
@@ -418,7 +442,7 @@ export function DashboardPage() {
             <button type="button" className={mode === "hardware" ? "active" : ""} onClick={() => setMode("hardware")}>Hardware</button>
           </div>
         </div>
-        <div className="hero__meta hero__meta--dark">
+        <div className="hero__meta">
           <StatusBadge
             label={mode === "hardware" && !nodes.length ? "Hardware Offline" : activeNode?.status === "critical" ? "Critical Environment" : "System Ready"}
             tone={mode === "hardware" && !nodes.length ? "critical" : activeNode?.status ?? "neutral"}
@@ -556,7 +580,7 @@ export function DashboardPage() {
           </div>
 
           <div className="chart-row">
-            <div className="panel panel--dark chart-panel-alt">
+            <div className="panel chart-panel-alt">
               <div className="panel__header">
                 <h2>Feature Importance</h2>
                 <span>Model drivers</span>
@@ -564,16 +588,16 @@ export function DashboardPage() {
               <div className="chart-wrap chart-wrap--small">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={featureData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(113, 128, 150, 0.16)" />
-                    <XAxis dataKey="feature" stroke="#8ea0b8" />
-                    <YAxis stroke="#8ea0b8" />
-                    <Tooltip />
-                    <Bar dataKey="importance" fill="#5cc8ff" radius={[8, 8, 0, 0]} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={chartGridColor} />
+                    <XAxis dataKey="feature" stroke={chartAxisColor} />
+                    <YAxis stroke={chartAxisColor} />
+                    <Tooltip contentStyle={chartTooltipStyle} />
+                    <Bar dataKey="importance" fill="var(--accent-strong)" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </div>
-            <div className="panel panel--dark chart-panel-alt">
+            <div className="panel chart-panel-alt">
               <div className="panel__header">
                 <h2>Confusion Matrix</h2>
                 <span>Prediction quality</span>

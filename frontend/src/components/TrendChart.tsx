@@ -36,15 +36,22 @@ export function TrendChart({ data }: TrendChartProps) {
       <div className="chart-wrap">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(113, 128, 150, 0.16)" />
-            <XAxis dataKey="time" stroke="#5f6f86" />
-            <YAxis stroke="#5f6f86" />
-            <Tooltip />
-            <Legend />
-            <Line type="monotone" dataKey="temperature" stroke="#e05b3d" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="humidity" stroke="#1f8a70" strokeWidth={3} dot={false} />
-            <Line type="monotone" dataKey="ammonia" stroke="#b76e12" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="soil" stroke="#3d5a80" strokeWidth={2} dot={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+            <XAxis dataKey="time" stroke="var(--chart-axis)" />
+            <YAxis stroke="var(--chart-axis)" />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "var(--tooltip-bg)",
+                border: "1px solid var(--border)",
+                borderRadius: "16px",
+                color: "var(--text)"
+              }}
+            />
+            <Legend wrapperStyle={{ color: "var(--text)" }} />
+            <Line type="monotone" dataKey="temperature" stroke="var(--chart-temp)" strokeWidth={3} dot={false} />
+            <Line type="monotone" dataKey="humidity" stroke="var(--chart-humidity)" strokeWidth={3} dot={false} />
+            <Line type="monotone" dataKey="ammonia" stroke="var(--chart-ammonia)" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="soil" stroke="var(--chart-soil)" strokeWidth={2} dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
