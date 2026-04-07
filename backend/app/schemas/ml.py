@@ -19,10 +19,19 @@ class RetrainResponse(BaseModel):
     model_version: str
     best_model: str
     source: str
+    current_model: str
+    preferred_model: str
+
+
+class ModelPreferenceRequest(BaseModel):
+    preferred_model: str
 
 
 class MetricsResponse(BaseModel):
     best_model: str
+    current_model: str
+    preferred_model: str
+    available_models: list[str]
     model_version: str
     accuracy: float
     precision: float

@@ -93,7 +93,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -324,6 +325,13 @@ pre {
   margin-bottom: 16px;
 }
 
+.panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .panel__header h2,
 .metric-card strong,
 .relay-card strong,
@@ -468,6 +476,23 @@ pre {
   color: var(--text);
 }
 
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.model-picker select {
+  min-width: 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
 .file-input {
   display: flex;
   align-items: center;
@@ -493,6 +518,10 @@ pre {
 
 .ghost-button {
   margin-top: 14px;
+}
+
+.ghost-button--compact {
+  margin-top: 0;
 }
 
 .data-table {

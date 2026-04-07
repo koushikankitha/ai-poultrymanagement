@@ -20,6 +20,7 @@ import {
   retrainModel,
   retrainModelWithDataset,
   sendManualControl,
+  updatePreferredModel,
   updateControlMode
 } from "../api/sprinklerApi";
 import { MetricCard } from "../components/MetricCard";
@@ -38,6 +39,7 @@ const HARDWARE_FRESHNESS_MS = 2 * 60 * 1000;
 type DashboardMode = "simulation" | "hardware";
 type PageSection = "dashboard" | "analytics" | "history" | "reports" | "info";
 type ThemeMode = "dark" | "light";
+type ControlMode = "manual" | "ml" | "esp32_fallback";
 
 type SimulationBundle = {
   latestNodes: NodeSummary[];
@@ -71,6 +73,9 @@ const sectionContent: Record<PageSection, { title: string; subtitle: string }> =
 
 const simulationMetrics: MlMetrics = {
   best_model: "Random Forest",
+  current_model: "Random Forest",
+  preferred_model: "Auto",
+  available_models: ["Auto", "Random Forest", "Gradient Boosting", "Decision Tree", "Logistic Regression"],
   model_version: "simulation-v1",
   accuracy: 0.968,
   precision: 0.962,
@@ -144,8 +149,18 @@ function mergeNodeWithControl(node: NodeSummary, control?: ControlState, predict
   if (!control) {
     return node;
   }
-  const relay1On = control.control_mode === "manual" ? control.relay1_on : prediction?.sprinkler_on ?? node.latest_reading.ai_decision;
-  const relay2On = control.control_mode === "manual" ? control.relay2_on : false;
+  const relay1On =
+    control.control_mode === "manual"
+      ? control.relay1_on
+      : control.control_mode === "ml"
+        ? prediction?.sprinkler_on ?? node.latest_reading.ai_decision
+        : node.latest_reading.relay1_on;
+  const relay2On =
+    control.control_mode === "manual"
+      ? control.relay2_on
+      : control.control_mode === "ml"
+        ? false
+        : node.latest_reading.relay2_on;
   return {
     ...node,
     latest_reading: {
@@ -184,6 +199,7 @@ export function DashboardPage() {
   const [controlStates, setControlStates] = useState<Record<string, ControlState>>(simulationBundle.controlStates);
   const [datasetFile, setDatasetFile] = useState<File | null>(null);
   const [datasetBusy, setDatasetBusy] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
 
   useEffect(() => {
     setAuthToken(token);
@@ -317,7 +333,7 @@ export function DashboardPage() {
     setMessage("Admin access enabled for relay mode and manual control.");
   }
 
-  async function handleSetControlMode(nextMode: "manual" | "ml") {
+  async function handleSetControlMode(nextMode: ControlMode) {
     if (!activeNode) {
       return;
     }
@@ -334,12 +350,12 @@ export function DashboardPage() {
           updated_at: new Date().toISOString()
         }
       }));
-      setMessage(`${activeNode.node_id.replace("N", "Node ")} switched to ${nextMode.toUpperCase()} relay control in simulation.`);
+      setMessage(`${activeNode.node_id.replace("N", "Node ")} switched to ${nextMode.replace("_", " ").toUpperCase()} control in simulation.`);
       return;
     }
     const updated = await updateControlMode(activeNode.node_id, nextMode);
     setControlStates((current) => ({ ...current, [updated.node_id]: updated }));
-    setMessage(`${activeNode.node_id.replace("N", "Node ")} switched to ${nextMode.toUpperCase()} relay control.`);
+    setMessage(`${activeNode.node_id.replace("N", "Node ")} switched to ${nextMode.replace("_", " ").toUpperCase()} control.`);
     await loadHardwareDashboard();
   }
 
@@ -380,7 +396,7 @@ export function DashboardPage() {
       return;
     }
     const result = await retrainModel();
-    setMessage(`Model retrained on ${result.trained_samples} samples with ${(result.accuracy * 100).toFixed(1)}% accuracy.`);
+    setMessage(`Model retrained with ${result.current_model} on ${result.trained_samples} samples and ${(result.accuracy * 100).toFixed(1)}% accuracy.`);
     await loadHardwareDashboard();
   }
 
@@ -398,7 +414,7 @@ export function DashboardPage() {
     try {
       const result = await retrainModelWithDataset(datasetFile);
       setMessage(
-        `Dataset training completed with ${result.best_model} on ${result.trained_samples} rows from ${result.source}. Accuracy: ${(result.accuracy * 100).toFixed(1)}%.`
+        `Dataset training completed with ${result.current_model} on ${result.trained_samples} rows from ${result.source}. Accuracy: ${(result.accuracy * 100).toFixed(1)}%.`
       );
       setDatasetFile(null);
       await loadHardwareDashboard();
@@ -414,6 +430,68 @@ export function DashboardPage() {
     } finally {
       setDatasetBusy(false);
     }
+  }
+
+  async function handlePreferredModelChange(nextModel: string) {
+    setModelBusy(true);
+    try {
+      const updated = await updatePreferredModel(nextModel);
+      setMetrics(updated);
+      setMessage(
+        nextModel === "Auto"
+          ? "Model selection set to Auto. Future training will save the best-performing model."
+          : `Model selection set to ${nextModel}. Future training will save that model.`
+      );
+    } catch {
+      setMessage("Could not update the model selection right now.");
+    } finally {
+      setModelBusy(false);
+    }
+  }
+
+  function triggerCsvDownload(filename: string, rows: Array<Array<string | number>>) {
+    const csv = rows
+      .map((row) => row.map((value) => `"${String(value ?? "").replace(/"/g, "\"\"")}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleDownloadCurrentDataCsv() {
+    const rows = [
+      ["node_id", "temperature", "humidity", "ammonia", "soil_moisture", "relay1_on", "relay2_on", "sprinkler_on", "ai_decision", "reading_source", "created_at"],
+      ...allHistory.map((item) => [
+        item.node_id,
+        item.temperature,
+        item.humidity,
+        item.ammonia ?? "",
+        item.soil_moisture ?? "",
+        item.relay1_on ? 1 : 0,
+        item.relay2_on ? 1 : 0,
+        item.sprinkler_on ? 1 : 0,
+        item.ai_decision ? 1 : 0,
+        item.reading_source,
+        item.created_at
+      ])
+    ];
+    triggerCsvDownload("current-sprinkler-data.csv", rows);
+  }
+
+  function handleDownloadTrainingCsv() {
+    const rows = [
+      ["temperature", "humidity", "sprinkler_on"],
+      ...allHistory.map((item) => [
+        item.temperature,
+        item.humidity,
+        item.sprinkler_on ? 1 : 0
+      ])
+    ];
+    triggerCsvDownload("ml-training-template.csv", rows);
   }
 
   const comparisonRows = Object.entries(metrics.all_results ?? {});
@@ -524,10 +602,11 @@ export function DashboardPage() {
               <h2>Relay Control</h2>
               <span>{activeNode ? activeNode.node_id.replace("N", "Node ") : "Choose a node"}</span>
             </div>
-            <p className="section-copy">Switch between full manual relay control and AI/ML-driven relay control.</p>
+            <p className="section-copy">Switch between manual control, cloud ML control, and ESP32 local fallback logic.</p>
             <div className="mode-switch mode-switch--compact">
               <button type="button" className={controlMode === "manual" ? "active" : ""} onClick={() => void handleSetControlMode("manual")} disabled={!activeNode}>Manual</button>
               <button type="button" className={controlMode === "ml" ? "active" : ""} onClick={() => void handleSetControlMode("ml")} disabled={!activeNode}>ML</button>
+              <button type="button" className={controlMode === "esp32_fallback" ? "active" : ""} onClick={() => void handleSetControlMode("esp32_fallback")} disabled={!activeNode}>ESP32 Fallback</button>
             </div>
             <div className="login-inline">
               {!token ? (
@@ -559,14 +638,16 @@ export function DashboardPage() {
                 ? "No node selected yet."
                 : controlMode === "manual"
                   ? "Manual mode gives the operator direct relay control."
-                  : "ML mode gives the AI model control over relay decisions based on current climate data."}
+                  : controlMode === "esp32_fallback"
+                    ? "ESP32 fallback mode tells the board to apply its own local threshold logic when cloud ML is unavailable or intentionally bypassed."
+                    : "ML mode gives the AI model control over relay decisions based on current climate data."}
             </p>
           </div>
 
           <div className="panel panel--dark ai-insight">
             <div className="panel__header">
               <h2>AI Insight</h2>
-              <span>{metrics.best_model}</span>
+              <span>{metrics.current_model}</span>
             </div>
             <div className="ai-insight__metrics">
               <div><p>Prediction</p><strong>{prediction ? (prediction.sprinkler_on ? "TURN ON" : "KEEP OFF") : "--"}</strong></div>
@@ -575,6 +656,18 @@ export function DashboardPage() {
               <div><p>Source</p><strong>{mode === "simulation" ? "SIM" : "HARDWARE"}</strong></div>
             </div>
             <p className="summary-panel__reason">{prediction?.reason ?? "AI prediction will appear when compatible node data is available."}</p>
+            <div className="dataset-trainer">
+              <strong>Model Selection</strong>
+              <p className="section-copy">Choose Auto to save the best-performing model, or lock training to one specific algorithm.</p>
+              <div className="model-picker">
+                <select value={metrics.preferred_model ?? "Auto"} onChange={(event) => void handlePreferredModelChange(event.target.value)} disabled={modelBusy}>
+                  {(metrics.available_models ?? ["Auto"]).map((modelName) => (
+                    <option key={modelName} value={modelName}>{modelName}</option>
+                  ))}
+                </select>
+                <span>Current: {metrics.current_model}</span>
+              </div>
+            </div>
             <button type="button" className="ghost-button" onClick={() => void handleRetrain()}>Retrain Model</button>
             <div className="dataset-trainer">
               <strong>Train With Your Dataset</strong>
@@ -589,6 +682,9 @@ export function DashboardPage() {
               </label>
               <button type="button" className="ghost-button" onClick={() => void handleDatasetRetrain()} disabled={datasetBusy}>
                 {datasetBusy ? "Training..." : "Train Using Dataset"}
+              </button>
+              <button type="button" className="ghost-button" onClick={handleDownloadTrainingCsv} disabled={!allHistory.length}>
+                Download Training CSV
               </button>
               <p className="summary-panel__reason">Supported values for `sprinkler_on`: 0/1, true/false, or on/off.</p>
             </div>
@@ -680,7 +776,12 @@ export function DashboardPage() {
         <section className="panel panel--dark table-panel">
           <div className="panel__header">
             <h2>History</h2>
-            <span>{allHistory.length} records</span>
+            <div className="panel__header-actions">
+              <span>{allHistory.length} records</span>
+              <button type="button" className="ghost-button ghost-button--compact" onClick={handleDownloadCurrentDataCsv} disabled={!allHistory.length}>
+                Download CSV
+              </button>
+            </div>
           </div>
           <table className="data-table">
             <thead>
@@ -744,7 +845,7 @@ export function DashboardPage() {
                   <tr key={node.node_id}>
                     <td>{node.node_id.replace("N", "Node ")}</td>
                     <td>{node.status}</td>
-                    <td>{controlStates[node.node_id]?.control_mode?.toUpperCase() ?? "ML"}</td>
+                    <td>{(controlStates[node.node_id]?.control_mode ?? "ml").replace("_", " ").toUpperCase()}</td>
                     <td>{node.latest_reading.sprinkler_on ? "ON" : "OFF"}</td>
                     <td>{node.latest_reading.temperature.toFixed(1)} C</td>
                     <td>{node.latest_reading.humidity.toFixed(0)} %</td>
@@ -768,7 +869,7 @@ export function DashboardPage() {
               <li>Frontend: React + Vite + Recharts</li>
               <li>Backend: FastAPI + SQLAlchemy + scikit-learn</li>
               <li>Deployment: Render-friendly backend and static frontend</li>
-              <li>Control: Manual relay mode or ML-controlled relay mode</li>
+              <li>Control: Manual mode, ML mode, or ESP32 fallback mode</li>
             </ul>
           </div>
           <div className="panel panel--dark">

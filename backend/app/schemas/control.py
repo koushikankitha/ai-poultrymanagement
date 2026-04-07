@@ -1,4 +1,5 @@
-﻿from datetime import datetime
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -12,7 +13,7 @@ class ManualControlRequest(BaseModel):
 
 class ControlModeRequest(BaseModel):
     node_id: str
-    control_mode: str
+    control_mode: Literal["ml", "manual", "esp32_fallback"]
     notes: str | None = None
 
 
@@ -31,7 +32,7 @@ class ControlResponse(BaseModel):
 
 class ControlStateResponse(BaseModel):
     node_id: str
-    control_mode: str
+    control_mode: Literal["ml", "manual", "esp32_fallback"]
     relay1_on: bool
     relay2_on: bool
     updated_at: datetime | None = None

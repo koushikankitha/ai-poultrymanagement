@@ -33,6 +33,13 @@ export async function fetchMlMetrics() {
   return data;
 }
 
+export async function updatePreferredModel(preferredModel: string) {
+  const { data } = await api.post<MlMetrics>("/ml/preference", {
+    preferred_model: preferredModel
+  });
+  return data;
+}
+
 export async function fetchControlStates() {
   const { data } = await api.get<ControlState[]>("/control/state");
   return data;
@@ -54,7 +61,7 @@ export async function login(username: string, password: string) {
   return data;
 }
 
-export async function updateControlMode(nodeId: string, controlMode: "manual" | "ml") {
+export async function updateControlMode(nodeId: string, controlMode: "manual" | "ml" | "esp32_fallback") {
   const { data } = await api.post<ControlState>("/control/mode", {
     node_id: nodeId,
     control_mode: controlMode

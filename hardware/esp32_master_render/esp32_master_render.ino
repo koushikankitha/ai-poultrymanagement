@@ -12,7 +12,18 @@
 #define VENT_FAN 27
 #define HEATER 25
 #define SPRINKLER 33
-#define DUMMY 32
+#define COOLER 32
+
+#define F_BIT 0x08
+#define H_BIT 0x04
+#define S_BIT 0x02
+#define C_BIT 0x01
+
+#define TEMP_MIN_TH 25.0
+#define TEMP_MAX_TH 35.0
+#define HUM_MIN_TH 40.0
+#define HUM_MAX_TH 70.0
+#define GAS_MAX_TH 70
 
 const char* WIFI_SSID = "Temp";
 const char* WIFI_PASSWORD = "123445666";
@@ -34,8 +45,12 @@ unsigned long lastControlCheck = 0;
 void connectWiFi();
 void blink(int cycle = 0);
 void displayData(float temp, float hum, int mq, int rssi, const String& modeLabel);
-void applyRelayState(bool relay1On, bool relay2On);
-bool postSensorData(float temp, float hum, int mq, bool relay1On, bool relay2On);
+void relayCtrl(uint8_t code);
+uint8_t buildLocalRelayCode(float temp, float hum, int mq);
+void applyManualRelayState(bool relay1On, bool relay2On);
+void applyLocalFallback(float temp, float hum, int mq);
+void applyMlRelayState(float temp, float hum, int mq, bool sprinklerOn);
+bool postSensorData(float temp, float hum, int mq, bool sprinklerOn, bool fanOn);
 bool fetchControlMode(String& controlMode, bool& relay1On, bool& relay2On);
 bool fetchMlDecision(float temp, float hum, bool& sprinklerOn);
 
@@ -56,11 +71,9 @@ void setup() {
   pinMode(VENT_FAN, OUTPUT);
   pinMode(HEATER, OUTPUT);
   pinMode(SPRINKLER, OUTPUT);
-  pinMode(DUMMY, OUTPUT);
+  pinMode(COOLER, OUTPUT);
 
-  applyRelayState(false, false);
-  digitalWrite(HEATER, LOW);
-  digitalWrite(DUMMY, LOW);
+  relayCtrl(0);
 
   LoRa.setPins(5, 14, 26);
   if (!LoRa.begin(433E6)) {
@@ -106,32 +119,51 @@ void loop() {
       latestTemp = data.substring(0, i1).toFloat();
       latestHum = data.substring(i1 + 1, i2).toFloat();
       latestMq = data.substring(i2 + 1).toInt();
-
-      bool currentRelay1 = digitalRead(SPRINKLER);
-      bool currentRelay2 = digitalRead(VENT_FAN);
-      postSensorData(latestTemp, latestHum, latestMq, currentRelay1, currentRelay2);
+    } else {
+      Serial.println("Invalid packet format");
+      return;
     }
   }
 
-  if (millis() - lastControlCheck >= CONTROL_REFRESH_MS) {
-    lastControlCheck = millis();
+  if (millis() - lastControlCheck < CONTROL_REFRESH_MS) {
+    return;
+  }
+  lastControlCheck = millis();
 
-    String controlMode = "ml";
-    bool relay1On = false;
-    bool relay2On = false;
+  bool sprinklerOnNow = digitalRead(SPRINKLER) == LOW;
+  bool fanOnNow = digitalRead(VENT_FAN) == LOW;
+  postSensorData(latestTemp, latestHum, latestMq, sprinklerOnNow, fanOnNow);
 
-    if (fetchControlMode(controlMode, relay1On, relay2On)) {
-      if (controlMode == "manual") {
-        applyRelayState(relay1On, relay2On);
-        displayData(latestTemp, latestHum, latestMq, latestRssi, "MAN");
-      } else {
-        bool sprinklerOn = false;
-        if (fetchMlDecision(latestTemp, latestHum, sprinklerOn)) {
-          applyRelayState(sprinklerOn, sprinklerOn);
-        }
-        displayData(latestTemp, latestHum, latestMq, latestRssi, "ML ");
-      }
-    }
+  String controlMode = "esp32_fallback";
+  bool relay1On = false;
+  bool relay2On = false;
+  bool hasCloudMode = fetchControlMode(controlMode, relay1On, relay2On);
+
+  if (!hasCloudMode) {
+    applyLocalFallback(latestTemp, latestHum, latestMq);
+    displayData(latestTemp, latestHum, latestMq, latestRssi, "FBK");
+    return;
+  }
+
+  if (controlMode == "manual") {
+    applyManualRelayState(relay1On, relay2On);
+    displayData(latestTemp, latestHum, latestMq, latestRssi, "MAN");
+    return;
+  }
+
+  if (controlMode == "esp32_fallback") {
+    applyLocalFallback(latestTemp, latestHum, latestMq);
+    displayData(latestTemp, latestHum, latestMq, latestRssi, "FBK");
+    return;
+  }
+
+  bool sprinklerOn = false;
+  if (fetchMlDecision(latestTemp, latestHum, sprinklerOn)) {
+    applyMlRelayState(latestTemp, latestHum, latestMq, sprinklerOn);
+    displayData(latestTemp, latestHum, latestMq, latestRssi, "ML ");
+  } else {
+    applyLocalFallback(latestTemp, latestHum, latestMq);
+    displayData(latestTemp, latestHum, latestMq, latestRssi, "FBK");
   }
 }
 
@@ -186,12 +218,64 @@ void displayData(float temp, float hum, int mq, int rssi, const String& modeLabe
   lcd.print(rssi);
 }
 
-void applyRelayState(bool relay1On, bool relay2On) {
-  digitalWrite(SPRINKLER, relay1On ? HIGH : LOW);
-  digitalWrite(VENT_FAN, relay2On ? HIGH : LOW);
+void relayCtrl(uint8_t code) {
+  digitalWrite(VENT_FAN, (code & F_BIT) ? LOW : HIGH);
+  digitalWrite(HEATER, (code & H_BIT) ? LOW : HIGH);
+  digitalWrite(SPRINKLER, (code & S_BIT) ? LOW : HIGH);
+  digitalWrite(COOLER, (code & C_BIT) ? LOW : HIGH);
 }
 
-bool postSensorData(float temp, float hum, int mq, bool relay1On, bool relay2On) {
+uint8_t buildLocalRelayCode(float temp, float hum, int mq) {
+  uint8_t code = 0;
+
+  if (temp <= TEMP_MIN_TH) {
+    code |= H_BIT;
+  } else if (temp >= TEMP_MAX_TH) {
+    code |= F_BIT | C_BIT;
+  }
+
+  if (hum <= HUM_MIN_TH) {
+    code |= S_BIT;
+  } else if (hum >= HUM_MAX_TH) {
+    code |= F_BIT;
+    code &= ~C_BIT;
+  }
+
+  if (mq >= GAS_MAX_TH) {
+    code |= F_BIT;
+  }
+
+  return code;
+}
+
+void applyManualRelayState(bool relay1On, bool relay2On) {
+  uint8_t code = 0;
+  if (relay1On) {
+    code |= S_BIT;
+  }
+  if (relay2On) {
+    code |= F_BIT;
+  }
+  relayCtrl(code);
+}
+
+void applyLocalFallback(float temp, float hum, int mq) {
+  relayCtrl(buildLocalRelayCode(temp, hum, mq));
+}
+
+void applyMlRelayState(float temp, float hum, int mq, bool sprinklerOn) {
+  uint8_t code = buildLocalRelayCode(temp, hum, mq);
+
+  if (sprinklerOn) {
+    code |= S_BIT;
+  } else {
+    code &= ~S_BIT;
+  }
+
+  relayCtrl(code);
+}
+
+bool postSensorData(float temp, float hum, int mq, bool sprinklerOn, bool fanOn) {
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
     if (WiFi.status() != WL_CONNECTED) {
@@ -209,8 +293,8 @@ bool postSensorData(float temp, float hum, int mq, bool relay1On, bool relay2On)
   doc["temperature"] = temp;
   doc["humidity"] = hum;
   doc["ammonia"] = mq;
-  doc["relay1_on"] = relay1On;
-  doc["relay2_on"] = relay2On;
+  doc["relay1_on"] = sprinklerOn;
+  doc["relay2_on"] = fanOn;
   doc["reading_source"] = "hardware";
 
   String body;
@@ -239,9 +323,11 @@ bool fetchControlMode(String& controlMode, bool& relay1On, bool& relay2On) {
     return false;
   }
 
-  DynamicJsonDocument doc(256);
-  DeserializationError error = deserializeJson(doc, http.getString());
+  String response = http.getString();
   http.end();
+
+  DynamicJsonDocument doc(256);
+  DeserializationError error = deserializeJson(doc, response);
   if (error) {
     Serial.println("Control JSON parse failed");
     return false;
@@ -269,19 +355,22 @@ bool fetchMlDecision(float temp, float hum, bool& sprinklerOn) {
   DynamicJsonDocument requestDoc(128);
   requestDoc["temperature"] = temp;
   requestDoc["humidity"] = hum;
+
   String body;
   serializeJson(requestDoc, body);
 
   int httpCode = http.POST(body);
-  if (httpCode <= 0) {
+  if (httpCode <= 0 || httpCode >= 300) {
     Serial.printf("POST /ml/predict -> %d\n", httpCode);
     http.end();
     return false;
   }
 
-  DynamicJsonDocument responseDoc(256);
-  DeserializationError error = deserializeJson(responseDoc, http.getString());
+  String response = http.getString();
   http.end();
+
+  DynamicJsonDocument responseDoc(256);
+  DeserializationError error = deserializeJson(responseDoc, response);
   if (error) {
     Serial.println("ML JSON parse failed");
     return false;

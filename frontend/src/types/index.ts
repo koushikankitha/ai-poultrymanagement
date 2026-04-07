@@ -38,6 +38,8 @@ export type RetrainResponse = {
   model_version: string;
   best_model: string;
   source: string;
+  current_model: string;
+  preferred_model: string;
 };
 
 export type ControlResponse = {
@@ -52,7 +54,7 @@ export type ControlResponse = {
 
 export type ControlState = {
   node_id: string;
-  control_mode: "manual" | "ml";
+  control_mode: "manual" | "ml" | "esp32_fallback";
   relay1_on: boolean;
   relay2_on: boolean;
   updated_at?: string | null;
@@ -60,6 +62,9 @@ export type ControlState = {
 
 export type MlMetrics = {
   best_model: string;
+  current_model: string;
+  preferred_model: string;
+  available_models: string[];
   model_version: string;
   accuracy: number;
   precision: number;

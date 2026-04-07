@@ -23,6 +23,12 @@ DEFAULT_VERSION = "bootstrap-v2"
 FEATURES = ["temperature", "humidity"]
 LABELS = ["OFF", "ON"]
 REQUIRED_COLUMNS = ["temperature", "humidity", "sprinkler_on"]
+MODEL_NAMES = [
+    "Random Forest",
+    "Gradient Boosting",
+    "Decision Tree",
+    "Logistic Regression",
+]
 
 
 def bootstrap_dataset() -> pd.DataFrame:
@@ -85,6 +91,10 @@ def _build_models() -> dict[str, Pipeline]:
     }
 
 
+def available_model_names() -> list[str]:
+    return MODEL_NAMES.copy()
+
+
 def _feature_importance(model: Pipeline) -> dict[str, list]:
     classifier = model.named_steps["classifier"]
     if hasattr(classifier, "feature_importances_"):
@@ -129,16 +139,45 @@ def validate_training_frame(frame: pd.DataFrame) -> None:
         raise ValueError("Each class needs at least 2 rows so the train/test split can run")
 
 
+def _select_model(
+    results: dict[str, dict[str, float]],
+    trained_models: dict[str, Pipeline],
+    preferred_model: str | None,
+) -> tuple[str, Pipeline, dict[str, float]]:
+    if preferred_model and preferred_model != "Auto":
+        if preferred_model not in trained_models:
+            raise ValueError(f"Unknown model selection: {preferred_model}")
+        return preferred_model, trained_models[preferred_model], results[preferred_model]
+
+    best_name = ""
+    best_metrics: dict[str, float] = {}
+    for name, metrics in results.items():
+        if metrics["accuracy"] >= best_metrics.get("accuracy", -1):
+            best_name = name
+            best_metrics = metrics
+
+    if not best_name:
+        raise ValueError("No model could be selected for training")
+    return best_name, trained_models[best_name], best_metrics
+
+
 def bootstrap_model() -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if MODEL_PATH.exists() and META_PATH.exists():
         metadata = joblib.load(META_PATH)
         if isinstance(metadata, dict) and {"best_model", "all_results", "confusion_matrix", "feature_importance"}.issubset(metadata.keys()):
+            metadata.setdefault("preferred_model", "Auto")
+            metadata.setdefault("available_models", available_model_names())
+            metadata.setdefault("current_model", metadata.get("best_model", "Unknown"))
             return
     train_model(bootstrap_dataset(), DEFAULT_VERSION)
 
 
-def train_model(frame: pd.DataFrame, model_version: str) -> tuple[Pipeline, dict[str, object]]:
+def train_model(
+    frame: pd.DataFrame,
+    model_version: str,
+    preferred_model: str | None = None,
+) -> tuple[Pipeline, dict[str, object]]:
     validate_training_frame(frame)
     X = frame[FEATURES]
     y = frame["sprinkler_on"]
@@ -148,40 +187,43 @@ def train_model(frame: pd.DataFrame, model_version: str) -> tuple[Pipeline, dict
     )
 
     results: dict[str, dict[str, float]] = {}
-    best_model_name = ""
-    best_model: Pipeline | None = None
-    best_metrics: dict[str, float] = {}
-    best_predictions = None
+    trained_models: dict[str, Pipeline] = {}
 
     for name, model in _build_models().items():
         model.fit(X_train, y_train)
         predictions = model.predict(X_test)
         metrics = _metrics_dict(y_test, predictions)
         results[name] = metrics
-        if metrics["accuracy"] >= best_metrics.get("accuracy", -1):
-            best_model_name = name
-            best_model = model
-            best_metrics = metrics
-            best_predictions = predictions
+        trained_models[name] = model
 
-    assert best_model is not None
-    assert best_predictions is not None
+    selected_model_name, selected_model, selected_metrics = _select_model(
+        results,
+        trained_models,
+        preferred_model,
+    )
+    selected_predictions = selected_model.predict(X_test)
+
+    best_model_name, _, best_metrics = _select_model(results, trained_models, None)
 
     metadata: dict[str, object] = {
         "best_model": best_model_name,
+        "current_model": selected_model_name,
         "model_version": model_version,
-        **best_metrics,
+        **selected_metrics,
         "all_results": results,
         "confusion_matrix": {
             "labels": LABELS,
-            "matrix": confusion_matrix(y_test, best_predictions, labels=[0, 1]).tolist(),
+            "matrix": confusion_matrix(y_test, selected_predictions, labels=[0, 1]).tolist(),
         },
-        "feature_importance": _feature_importance(best_model),
+        "feature_importance": _feature_importance(selected_model),
+        "preferred_model": preferred_model or "Auto",
+        "available_models": available_model_names(),
+        "best_accuracy": best_metrics["accuracy"],
     }
 
-    joblib.dump(best_model, MODEL_PATH)
+    joblib.dump(selected_model, MODEL_PATH)
     joblib.dump(metadata, META_PATH)
-    return best_model, metadata
+    return selected_model, metadata
 
 
 def build_training_frame(readings: list[SensorReading]) -> pd.DataFrame:
@@ -202,6 +244,11 @@ def build_training_frame(readings: list[SensorReading]) -> pd.DataFrame:
 def load_model() -> Pipeline:
     bootstrap_model()
     return joblib.load(MODEL_PATH)
+
+
+def save_metadata(metadata: dict[str, object]) -> None:
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(metadata, META_PATH)
 
 
 def load_metadata() -> dict[str, object]:
