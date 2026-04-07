@@ -17,6 +17,8 @@ class RetrainResponse(BaseModel):
     trained_samples: int
     accuracy: float
     model_version: str
+    best_model: str
+    source: str
 
 
 class MetricsResponse(BaseModel):

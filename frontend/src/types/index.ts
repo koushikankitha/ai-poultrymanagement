@@ -32,6 +32,14 @@ export type PredictionResponse = {
   reason: string;
 };
 
+export type RetrainResponse = {
+  trained_samples: number;
+  accuracy: number;
+  model_version: string;
+  best_model: string;
+  source: string;
+};
+
 export type ControlResponse = {
   id: number;
   node_id: string;

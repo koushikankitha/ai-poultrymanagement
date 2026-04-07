@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import joblib
@@ -21,6 +22,7 @@ META_PATH = MODEL_DIR / "sprinkler_model_meta.joblib"
 DEFAULT_VERSION = "bootstrap-v2"
 FEATURES = ["temperature", "humidity"]
 LABELS = ["OFF", "ON"]
+REQUIRED_COLUMNS = ["temperature", "humidity", "sprinkler_on"]
 
 
 def bootstrap_dataset() -> pd.DataFrame:
@@ -36,9 +38,23 @@ def bootstrap_dataset() -> pd.DataFrame:
         {"temperature": 36.2, "humidity": 51.0, "sprinkler_on": 1},
         {"temperature": 37.8, "humidity": 48.0, "sprinkler_on": 1},
         {"temperature": 34.8, "humidity": 49.0, "sprinkler_on": 1},
-        {"temperature": 30.0, "humidity": 75.0, "sprinkler_on": 0}
+        {"temperature": 30.0, "humidity": 75.0, "sprinkler_on": 0},
     ]
     return pd.DataFrame(rows)
+
+
+def _parse_sprinkler_value(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return int(value)
+
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "on", "yes"}:
+        return 1
+    if normalized in {"0", "false", "off", "no"}:
+        return 0
+    raise ValueError("sprinkler_on values must be 0/1, true/false, or on/off")
 
 
 def _metrics_dict(y_true, y_pred) -> dict[str, float]:
@@ -80,6 +96,39 @@ def _feature_importance(model: Pipeline) -> dict[str, list]:
     return {"features": FEATURES, "importance": importance}
 
 
+def _normalize_training_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    normalized = frame.rename(columns={column: str(column).strip().lower() for column in frame.columns})
+    missing = [column for column in REQUIRED_COLUMNS if column not in normalized.columns]
+    if missing:
+        raise ValueError(f"Dataset is missing required columns: {', '.join(missing)}")
+
+    cleaned = normalized[REQUIRED_COLUMNS].copy()
+    cleaned["temperature"] = pd.to_numeric(cleaned["temperature"], errors="coerce")
+    cleaned["humidity"] = pd.to_numeric(cleaned["humidity"], errors="coerce")
+    cleaned["sprinkler_on"] = cleaned["sprinkler_on"].map(_parse_sprinkler_value)
+    cleaned = cleaned.dropna()
+    return cleaned.reset_index(drop=True)
+
+
+def load_uploaded_training_frame(contents: bytes, filename: str) -> pd.DataFrame:
+    if not filename.lower().endswith(".csv"):
+        raise ValueError("Only CSV datasets are supported right now")
+
+    frame = pd.read_csv(BytesIO(contents))
+    return _normalize_training_frame(frame)
+
+
+def validate_training_frame(frame: pd.DataFrame) -> None:
+    if len(frame) < 6:
+        raise ValueError("Dataset must contain at least 6 usable rows")
+
+    class_counts = frame["sprinkler_on"].value_counts()
+    if class_counts.size < 2:
+        raise ValueError("Dataset must include both sprinkler OFF and ON examples")
+    if int(class_counts.min()) < 2:
+        raise ValueError("Each class needs at least 2 rows so the train/test split can run")
+
+
 def bootstrap_model() -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if MODEL_PATH.exists() and META_PATH.exists():
@@ -90,6 +139,7 @@ def bootstrap_model() -> None:
 
 
 def train_model(frame: pd.DataFrame, model_version: str) -> tuple[Pipeline, dict[str, object]]:
+    validate_training_frame(frame)
     X = frame[FEATURES]
     y = frame["sprinkler_on"]
     test_size = 0.25 if len(frame) >= 12 else 0.2
@@ -139,14 +189,14 @@ def build_training_frame(readings: list[SensorReading]) -> pd.DataFrame:
         {
             "temperature": reading.temperature,
             "humidity": reading.humidity,
-            "sprinkler_on": int(reading.sprinkler_on)
+            "sprinkler_on": int(reading.sprinkler_on),
         }
         for reading in readings
     ]
     frame = pd.DataFrame(records)
     if len(frame) < 10:
         frame = pd.concat([frame, bootstrap_dataset()], ignore_index=True)
-    return frame.dropna()
+    return _normalize_training_frame(frame)
 
 
 def load_model() -> Pipeline:

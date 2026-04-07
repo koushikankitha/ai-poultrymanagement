@@ -458,6 +458,34 @@ pre {
   margin-top: 14px;
 }
 
+.dataset-trainer {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--table-line);
+}
+
+.dataset-trainer strong {
+  color: var(--text);
+}
+
+.file-input {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: var(--panel-soft);
+  color: var(--muted-strong);
+  cursor: pointer;
+}
+
+.file-input input {
+  display: none;
+}
+
 .relay-actions button:disabled {
   opacity: 0.4;
   cursor: not-allowed;

@@ -5,7 +5,8 @@ import type {
   HistoryResponse,
   MlMetrics,
   NodeSummary,
-  PredictionResponse
+  PredictionResponse,
+  RetrainResponse
 } from "../types";
 
 export async function fetchLatestData(readingSource?: string) {
@@ -71,6 +72,17 @@ export async function sendManualControl(nodeId: string, relay1On: boolean, relay
 }
 
 export async function retrainModel() {
-  const { data } = await api.post("/ml/retrain");
-  return data as { trained_samples: number; accuracy: number; model_version: string };
+  const { data } = await api.post<RetrainResponse>("/ml/retrain");
+  return data;
+}
+
+export async function retrainModelWithDataset(file: File) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await api.post<RetrainResponse>("/ml/retrain/upload", formData, {
+    headers: {
+      "Content-Type": "multipart/form-data"
+    }
+  });
+  return data;
 }

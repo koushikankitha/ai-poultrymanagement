@@ -18,6 +18,7 @@ import {
   login,
   predictSprinkler,
   retrainModel,
+  retrainModelWithDataset,
   sendManualControl,
   updateControlMode
 } from "../api/sprinklerApi";
@@ -181,6 +182,8 @@ export function DashboardPage() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [message, setMessage] = useState<string>("Preparing dashboard...");
   const [controlStates, setControlStates] = useState<Record<string, ControlState>>(simulationBundle.controlStates);
+  const [datasetFile, setDatasetFile] = useState<File | null>(null);
+  const [datasetBusy, setDatasetBusy] = useState(false);
 
   useEffect(() => {
     setAuthToken(token);
@@ -381,6 +384,38 @@ export function DashboardPage() {
     await loadHardwareDashboard();
   }
 
+  async function handleDatasetRetrain() {
+    if (mode === "simulation") {
+      setMessage("Switch to hardware mode to train the backend model with your own dataset.");
+      return;
+    }
+    if (!datasetFile) {
+      setMessage("Choose a CSV dataset before starting model training.");
+      return;
+    }
+
+    setDatasetBusy(true);
+    try {
+      const result = await retrainModelWithDataset(datasetFile);
+      setMessage(
+        `Dataset training completed with ${result.best_model} on ${result.trained_samples} rows from ${result.source}. Accuracy: ${(result.accuracy * 100).toFixed(1)}%.`
+      );
+      setDatasetFile(null);
+      await loadHardwareDashboard();
+    } catch (error) {
+      const detail =
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error &&
+        typeof (error as { response?: { data?: { detail?: string } } }).response?.data?.detail === "string"
+          ? ((error as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? "Dataset training failed. Check the CSV columns and values, then try again.")
+          : "Dataset training failed. Check the CSV columns and values, then try again.";
+      setMessage(detail);
+    } finally {
+      setDatasetBusy(false);
+    }
+  }
+
   const comparisonRows = Object.entries(metrics.all_results ?? {});
   const featureData = metrics.feature_importance?.features.map((feature, index) => ({
     feature,
@@ -541,6 +576,22 @@ export function DashboardPage() {
             </div>
             <p className="summary-panel__reason">{prediction?.reason ?? "AI prediction will appear when compatible node data is available."}</p>
             <button type="button" className="ghost-button" onClick={() => void handleRetrain()}>Retrain Model</button>
+            <div className="dataset-trainer">
+              <strong>Train With Your Dataset</strong>
+              <p className="section-copy">Upload a CSV with `temperature`, `humidity`, and `sprinkler_on` columns to retrain the backend model.</p>
+              <label className="file-input">
+                <span>{datasetFile ? datasetFile.name : "Choose CSV dataset"}</span>
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(event) => setDatasetFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button type="button" className="ghost-button" onClick={() => void handleDatasetRetrain()} disabled={datasetBusy}>
+                {datasetBusy ? "Training..." : "Train Using Dataset"}
+              </button>
+              <p className="summary-panel__reason">Supported values for `sprinkler_on`: 0/1, true/false, or on/off.</p>
+            </div>
           </div>
 
           <div className="metric-grid metric-grid--analytics">
